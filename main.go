@@ -34,7 +34,7 @@ import (
 	"k8s.io/client-go/util/homedir"
 
 	"k8s.io/client-go/kubernetes/scheme"
-	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -61,7 +61,7 @@ func DBTypes() []DBType {
 }
 
 // ExecCmd exec command on specific pod and wait the command's output.
-func ExecCmd(client kubernetes.Interface, config *restclient.Config, pod corev1.Pod,
+func ExecCmd(client kubernetes.Interface, config *rest.Config, pod corev1.Pod,
     command string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
     cmd := []string{
         "sh",
@@ -103,18 +103,33 @@ func ExecCmd(client kubernetes.Interface, config *restclient.Config, pod corev1.
     return nil
 }
 
-func UploadS3(s3endpoint string, bucket string, objectname string, reader io.Reader) {
-	// The session the S3 Uploader will use
-	sess, err := session.NewSession(&aws.Config{
-	    Region: aws.String("default"),
-	    Endpoint: aws.String(s3endpoint),
-	    S3ForcePathStyle: aws.Bool(true),
-	})
+// The session the S3 Uploader will use
+func GetS3Session(s3endpoint string) (sess *session.Session) {
+	var err error
 
+	if s3endpoint == "" {
+		// Get parameters from environment variables and shared config
+		sess, err = session.NewSession()
+	} else {
+		sess, err = session.NewSession(&aws.Config{
+		    Region: aws.String("default"),
+		    Endpoint: aws.String(s3endpoint),
+		    S3ForcePathStyle: aws.Bool(true),
+		})
+	}
+
+	if err != nil {
+		fmt.Println("GetS3Session error:", err)
+	}
+
+	return
+}
+
+func UploadS3(sess *session.Session, bucket string, objectname string, reader io.Reader) {
 	// Create an uploader with the session and default options
 	uploader := s3manager.NewUploader(sess)
 
-	_, err = uploader.Upload(&s3manager.UploadInput{
+	_, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(bucket),
 		Key: aws.String(objectname),
 		Body: reader,
@@ -136,19 +151,21 @@ func GetObjectName(p corev1.Pod) string {
 	return fmt.Sprintf("%s/%s/%s.gz", p.Namespace, currentTime.Format("2006-01-02"), p.Name)
 }
 
-func GetGzipWriter(p corev1.Pod) *gzip.Writer {
+func GetGzipWriter(p corev1.Pod) (gzipFile *gzip.Writer) {
 	outputFile, err := os.OpenFile(GetFileName(p), os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Printf("Err: %s", err)
 	}
-	gzipFile := gzip.NewWriter(outputFile)
+	gzipFile = gzip.NewWriter(outputFile)
 	defer outputFile.Close()
 	defer gzipFile.Close()
-	return gzipFile
+	return
 }
 
-func GetKubernetes() (kubernetes.Interface, *restclient.Config) {
+func GetKubeConfigKubernetes() (clientset kubernetes.Interface, config *rest.Config) {
 	var kubeconfig *string
+	var err error
+
 	if home := homedir.HomeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
 	} else {
@@ -157,28 +174,50 @@ func GetKubernetes() (kubernetes.Interface, *restclient.Config) {
 	flag.Parse()
 
 	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		panic(err.Error())
 	}
 
 	// create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err = kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err.Error())
 	}
 
-	return clientset, config
+	return
+}
+
+func GetInClusterKubernetes() (clientset kubernetes.Interface, config *rest.Config) {
+	var err error
+
+	// creates the in-cluster config
+	config, err = rest.InClusterConfig()
+	if err != nil {
+		return nil, nil
+	}
+
+	// creates the clientset
+	clientset, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return
 }
 
 func main() {
-	clientset, config := GetKubernetes()
+	clientset, config := GetInClusterKubernetes()
+	if clientset == nil {
+		clientset, config = GetKubeConfigKubernetes()
+	}
 
 	//os.Setenv("AWS_ACCESS_KEY_ID", "tester")
 	//os.Setenv("AWS_SECRET_ACCESS_KEY", "testerpassword")
 	//os.Setenv("S3_ENDPOINT", "https://my.minio.test:9000")
 	//os.Setenv("S3_BUCKET", "kubackup")
-	s3endpoint := os.Getenv("S3_ENDPOINT")
+	sess := GetS3Session(os.Getenv("S3_ENDPOINT"))
+
 	bucket := os.Getenv("S3_BUCKET")
 	if bucket == "" {
 		bucket = "kubackup"
@@ -206,7 +245,7 @@ func main() {
 				}
 			}()
 
-			UploadS3(s3endpoint, bucket, GetObjectName(p), reader)
+			UploadS3(sess, bucket, GetObjectName(p), reader)
 			time.Sleep(time.Second)
 			reader.Close()
 		}
