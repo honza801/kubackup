@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"compress/gzip"
+	"github.com/klauspost/compress/zstd"
 
 	//"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,6 +57,11 @@ func DBTypes() []DBType {
 		{
 			labelSelector: "app.kubernetes.io/name=mysql",
 			command: "mysqldump -u root -p$MYSQL_ROOT_PASSWORD --all-databases",
+		},
+		{
+			labelSelector: "app.kubernetes.io/name=wordpress",
+			// corev1.Pod.Spec.Containers[].VolumeMounts[] {
+			command: "tar cf - -C /bitnami/wordpress .",
 		},
 	}
 }
@@ -143,12 +149,12 @@ func UploadS3(sess *session.Session, bucket string, objectname string, reader io
 }
 
 func GetFileName(p corev1.Pod) string {
-	return fmt.Sprintf("./tmp/%s-%s.gz", p.Namespace, p.Name)
+	return fmt.Sprintf("./tmp/%s-%s.zstd", p.Namespace, p.Name)
 }
 
 func GetObjectName(p corev1.Pod) string {
 	currentTime := time.Now()
-	return fmt.Sprintf("%s/%s/%s.gz", p.Namespace, currentTime.Format("2006-01-02"), p.Name)
+	return fmt.Sprintf("%s/%s/%s.zstd", p.Namespace, currentTime.Format("2006-01-02"), p.Name)
 }
 
 func GetGzipWriter(p corev1.Pod) (gzipFile *gzip.Writer) {
@@ -230,16 +236,17 @@ func main() {
 		}
 
 		for _, p := range pods.Items {
-			//gzipFile = GetGzipWriter(p)
 
+			//gzipFile = GetGzipWriter(p)
 			reader, writer := io.Pipe()
 
 			go func() {
-				gzipFile := gzip.NewWriter(writer)
-				defer gzipFile.Close()
+				compressedFile, err := zstd.NewWriter(writer)
+				//compressedFile := gzip.NewWriter(writer)
+				defer compressedFile.Close()
 				defer writer.Close()
 
-				err = ExecCmd(clientset, config, p, dbType.command, nil, gzipFile, os.Stderr)
+				err = ExecCmd(clientset, config, p, dbType.command, nil, compressedFile, os.Stderr)
 				if err != nil {
 					fmt.Println("ERR", err)
 				}
