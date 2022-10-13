@@ -24,6 +24,7 @@ import (
 	"time"
 	"io"
 	"os"
+	"sync"
 	"compress/gzip"
 	"github.com/klauspost/compress/zstd"
 
@@ -81,7 +82,7 @@ func ExecCmd(client kubernetes.Interface, config *rest.Config, pod corev1.Pod,
         Stdin:   true,
         Stdout:  true,
         Stderr:  true,
-        TTY:     true,
+        TTY:     false,
     }
     if stdin == nil {
         option.Stdin = false
@@ -229,6 +230,7 @@ func main() {
 		bucket = "kubackup"
 	}
 
+	var wg sync.WaitGroup
 	for _, dbType := range DBTypes() {
 		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: dbType.labelSelector})
 		if err != nil {
@@ -240,7 +242,9 @@ func main() {
 			//gzipFile = GetGzipWriter(p)
 			reader, writer := io.Pipe()
 
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				compressedFile, err := zstd.NewWriter(writer)
 				//compressedFile := gzip.NewWriter(writer)
 				defer compressedFile.Close()
@@ -254,8 +258,9 @@ func main() {
 
 			UploadS3(sess, bucket, GetObjectName(p), reader)
 			time.Sleep(time.Second)
-			reader.Close()
+			defer reader.Close()
 		}
 
 	}
+	wg.Wait()
 }
