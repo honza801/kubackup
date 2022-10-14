@@ -24,8 +24,6 @@ import (
 	"time"
 	"io"
 	"os"
-	"sync"
-	"compress/gzip"
 	"github.com/klauspost/compress/zstd"
 
 	//"k8s.io/apimachinery/pkg/api/errors"
@@ -44,25 +42,29 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-type DBType struct {
+type BackupType struct {
 	labelSelector string
 	command string
+	suffix string
 }
 
-func DBTypes() []DBType {
-	return []DBType {
+func BackupTypes() []BackupType {
+	return []BackupType {
 		{
 			labelSelector: "app.kubernetes.io/name=mariadb",
-			command: "mysqldump -u root -p$MARIADB_ROOT_PASSWORD --all-databases",
+			command: "mysqldump -u root -p$MARIADB_ROOT_PASSWORD $MARIADB_DATABASE",
+			suffix: ".sql",
 		},
 		{
 			labelSelector: "app.kubernetes.io/name=mysql",
-			command: "mysqldump -u root -p$MYSQL_ROOT_PASSWORD --all-databases",
+			command: "mysqldump -u root -p$MYSQL_ROOT_PASSWORD $MYSQL_DATABASE",
+			suffix: ".sql",
 		},
 		{
 			labelSelector: "app.kubernetes.io/name=wordpress",
 			// corev1.Pod.Spec.Containers[].VolumeMounts[] {
 			command: "tar cf - -C /bitnami/wordpress .",
+			suffix: ".tar",
 		},
 	}
 }
@@ -149,24 +151,9 @@ func UploadS3(sess *session.Session, bucket string, objectname string, reader io
 	fmt.Printf("Successfully uploaded %q to %q\n", objectname, bucket)
 }
 
-func GetFileName(p corev1.Pod) string {
-	return fmt.Sprintf("./tmp/%s-%s.zstd", p.Namespace, p.Name)
-}
-
-func GetObjectName(p corev1.Pod) string {
+func GetObjectName(p corev1.Pod, suffix string) string {
 	currentTime := time.Now()
-	return fmt.Sprintf("%s/%s/%s.zstd", p.Namespace, currentTime.Format("2006-01-02"), p.Name)
-}
-
-func GetGzipWriter(p corev1.Pod) (gzipFile *gzip.Writer) {
-	outputFile, err := os.OpenFile(GetFileName(p), os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		fmt.Printf("Err: %s", err)
-	}
-	gzipFile = gzip.NewWriter(outputFile)
-	defer outputFile.Close()
-	defer gzipFile.Close()
-	return
+	return fmt.Sprintf("%s/%s/%s%s", p.Namespace, currentTime.Format("2006-01-02"), p.Name, suffix)
 }
 
 func GetKubeConfigKubernetes() (clientset kubernetes.Interface, config *rest.Config) {
@@ -230,37 +217,35 @@ func main() {
 		bucket = "kubackup"
 	}
 
-	var wg sync.WaitGroup
-	for _, dbType := range DBTypes() {
-		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: dbType.labelSelector})
+	for _, backupType := range BackupTypes() {
+		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: backupType.labelSelector})
 		if err != nil {
 			panic(err.Error())
 		}
 
 		for _, p := range pods.Items {
 
-			//gzipFile = GetGzipWriter(p)
+			if p.Status.Phase != corev1.PodRunning {
+				continue
+			}
+
 			reader, writer := io.Pipe()
 
-			wg.Add(1)
 			go func() {
-				defer wg.Done()
-				compressedFile, err := zstd.NewWriter(writer)
-				//compressedFile := gzip.NewWriter(writer)
-				defer compressedFile.Close()
+				compWriter, err := zstd.NewWriter(writer)
 				defer writer.Close()
+				defer compWriter.Close()
 
-				err = ExecCmd(clientset, config, p, dbType.command, nil, compressedFile, os.Stderr)
+				err = ExecCmd(clientset, config, p, backupType.command, nil, compWriter, os.Stderr)
 				if err != nil {
 					fmt.Println("ERR", err)
 				}
 			}()
 
-			UploadS3(sess, bucket, GetObjectName(p), reader)
-			time.Sleep(time.Second)
 			defer reader.Close()
+			UploadS3(sess, bucket, GetObjectName(p, backupType.suffix+".zst"), reader)
+			time.Sleep(time.Second)
 		}
 
 	}
-	wg.Wait()
 }
