@@ -1,0 +1,15 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kubackup
+spec:
+  schedule: "1 1 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: kubackup
+            image: kubackup:0.2
+            imagePullPolicy: IfNotPresent
+          restartPolicy: OnFailure
