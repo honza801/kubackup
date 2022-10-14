@@ -6,6 +6,8 @@ go mod tidy
 go build .
 ```
 
+Build with `CGO_ENABLED=0` if preparing for docker image from alpine
+
 # How to run
 ```
 export AWS_ACCESS_KEY_ID=tester
