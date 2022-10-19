@@ -10,9 +10,7 @@ Build with `CGO_ENABLED=0` if preparing for docker image from alpine
 
 # How to run
 ```
-export AWS_ACCESS_KEY_ID=tester
-export AWS_SECRET_ACCESS_KEY=testerpass
-export S3_ENDPOINT=https://my.minio.test:9000
-export S3_BUCKET=kubackup
+cp env.example env
+source ./env
 ./kubackup
 ```
