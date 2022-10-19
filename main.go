@@ -45,6 +45,7 @@ import (
 
 type BackupType struct {
 	LabelSelector string `yaml:"labelSelector"`
+	Container string
 	Command string
 	Suffix string
 }
@@ -60,7 +61,7 @@ func check(e error) {
 }
 
 // ExecCmd exec command on specific pod and wait the command's output.
-func ExecCmd(client kubernetes.Interface, config *rest.Config, pod corev1.Pod,
+func ExecCmd(client kubernetes.Interface, config *rest.Config, pod corev1.Pod, container string,
     command string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
     cmd := []string{
         "sh",
@@ -71,20 +72,24 @@ func ExecCmd(client kubernetes.Interface, config *rest.Config, pod corev1.Pod,
         Namespace(pod.Namespace).SubResource("exec")
     option := &corev1.PodExecOptions{
         Command: cmd,
-        Stdin:   true,
         Stdout:  true,
         Stderr:  true,
         TTY:     false,
     }
     if stdin == nil {
         option.Stdin = false
+    } else {
+        option.Stdin = true
+    }
+    if container != "" {
+        option.Container = container
     }
     req.VersionedParams(
         option,
         scheme.ParameterCodec,
     )
 
-    fmt.Println("EXEC start on ns:", pod.Namespace, "p:", pod.Name)//, "command:", command)
+    fmt.Println("EXEC start on ns:", pod.Namespace, "p:", pod.Name, "c:", container)//, "cmd:", command)
     exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
     if err != nil {
 	    return err
@@ -230,7 +235,7 @@ func main() {
 				defer writer.Close()
 				defer compWriter.Close()
 
-				err = ExecCmd(clientset, config, p, backupType.Command, nil, compWriter, os.Stderr)
+				err = ExecCmd(clientset, config, p, backupType.Container, backupType.Command, nil, compWriter, os.Stderr)
 				if err != nil {
 					fmt.Println("ERR", err)
 				}
