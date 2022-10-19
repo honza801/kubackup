@@ -1,0 +1,11 @@
+backupTypes:
+  - labelSelector: app.kubernetes.io/name=mariadb
+    command: mysqldump -u root -p$MARIADB_ROOT_PASSWORD $MARIADB_DATABASE
+    suffix: .sql
+  - labelSelector: app.kubernetes.io/name=mysql
+    command: mysqldump -u root -p$MYSQL_ROOT_PASSWORD $MYSQL_DATABASE
+    suffix: .sql
+  - labelSelector: app.kubernetes.io/name=wordpress
+    # corev1.Pod.Spec.Containers[].VolumeMounts[]
+    command: tar cf - -C /bitnami/wordpress .
+    suffix: .tar

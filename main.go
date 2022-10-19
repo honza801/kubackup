@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"github.com/klauspost/compress/zstd"
+	"gopkg.in/yaml.v2"
 
 	//"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,30 +44,19 @@ import (
 )
 
 type BackupType struct {
-	labelSelector string
-	command string
-	suffix string
+	LabelSelector string `yaml:"labelSelector"`
+	Command string
+	Suffix string
 }
 
-func BackupTypes() []BackupType {
-	return []BackupType {
-		{
-			labelSelector: "app.kubernetes.io/name=mariadb",
-			command: "mysqldump -u root -p$MARIADB_ROOT_PASSWORD $MARIADB_DATABASE",
-			suffix: ".sql",
-		},
-		{
-			labelSelector: "app.kubernetes.io/name=mysql",
-			command: "mysqldump -u root -p$MYSQL_ROOT_PASSWORD $MYSQL_DATABASE",
-			suffix: ".sql",
-		},
-		{
-			labelSelector: "app.kubernetes.io/name=wordpress",
-			// corev1.Pod.Spec.Containers[].VolumeMounts[] {
-			command: "tar cf - -C /bitnami/wordpress .",
-			suffix: ".tar",
-		},
-	}
+type KubackupConfig struct {
+	BackupTypes []BackupType `yaml:"backupTypes"`
+}
+
+func check(e error) {
+    if e != nil {
+        panic(e)
+    }
 }
 
 // ExecCmd exec command on specific pod and wait the command's output.
@@ -169,15 +159,11 @@ func GetKubeConfigKubernetes() (clientset kubernetes.Interface, config *rest.Con
 
 	// use the current context in kubeconfig
 	config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	if err != nil {
-		panic(err.Error())
-	}
+	check(err)
 
 	// create the clientset
 	clientset, err = kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
+	check(err)
 
 	return
 }
@@ -193,14 +179,24 @@ func GetInClusterKubernetes() (clientset kubernetes.Interface, config *rest.Conf
 
 	// creates the clientset
 	clientset, err = kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
+	check(err)
+
+	return
+}
+
+func GetKubackupConfigFromFile(filename string) (kubackupConfig KubackupConfig){
+	configFile, err := os.ReadFile(filename)
+	check(err)
+
+	err = yaml.Unmarshal([]byte(configFile), &kubackupConfig)
+	check(err)
 
 	return
 }
 
 func main() {
+	kubackupConfig := GetKubackupConfigFromFile("config.yaml")
+
 	clientset, config := GetInClusterKubernetes()
 	if clientset == nil {
 		clientset, config = GetKubeConfigKubernetes()
@@ -217,11 +213,9 @@ func main() {
 		bucket = "kubackup"
 	}
 
-	for _, backupType := range BackupTypes() {
-		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: backupType.labelSelector})
-		if err != nil {
-			panic(err.Error())
-		}
+	for _, backupType := range kubackupConfig.BackupTypes {
+		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: backupType.LabelSelector})
+		check(err)
 
 		for _, p := range pods.Items {
 
@@ -236,14 +230,14 @@ func main() {
 				defer writer.Close()
 				defer compWriter.Close()
 
-				err = ExecCmd(clientset, config, p, backupType.command, nil, compWriter, os.Stderr)
+				err = ExecCmd(clientset, config, p, backupType.Command, nil, compWriter, os.Stderr)
 				if err != nil {
 					fmt.Println("ERR", err)
 				}
 			}()
 
 			defer reader.Close()
-			UploadS3(sess, bucket, GetObjectName(p, backupType.suffix+".zst"), reader)
+			UploadS3(sess, bucket, GetObjectName(p, backupType.Suffix+".zst"), reader)
 			time.Sleep(time.Second)
 		}
 
