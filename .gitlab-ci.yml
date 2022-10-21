@@ -6,6 +6,8 @@ build kubackup:
   stage: buildapp
   image: golang:latest
   script:
+    - go mod init kubackup
+    - go mod tidy
     - go build .
   artifacts:
     paths:
