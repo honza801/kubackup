@@ -200,7 +200,11 @@ func GetKubackupConfigFromFile(filename string) (kubackupConfig KubackupConfig){
 }
 
 func main() {
-	kubackupConfig := GetKubackupConfigFromFile("config.yaml")
+	configFile := os.Getenv("KUBACKUP_CONFIG")
+	if configFile == "" {
+		configFile = "/etc/kubackup/config.yaml"
+	}
+	kubackupConfig := GetKubackupConfigFromFile(configFile)
 
 	clientset, config := GetInClusterKubernetes()
 	if clientset == nil {
