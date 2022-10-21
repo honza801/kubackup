@@ -1,0 +1,12 @@
+resources:
+- cronjob.yaml
+
+configMapGenerator:
+- name: kubackup-config
+  files:
+  - config.yaml
+
+secretGenerator:
+- name: kubackup-env
+  envs:
+  - env
