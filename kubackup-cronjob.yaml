@@ -10,6 +10,6 @@ spec:
         spec:
           containers:
           - name: kubackup
-            image: kubackup:0.2
+            image: kubackup:v0.2
             imagePullPolicy: IfNotPresent
           restartPolicy: OnFailure
