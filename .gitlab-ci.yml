@@ -1,4 +1,9 @@
+stages:
+  - buildapp
+  - buildimage
+
 build kubackup:
+  stage: buildapp
   image: golang:latest
   script:
     - go build .
@@ -7,6 +12,7 @@ build kubackup:
       - kubackup
 
 build docker image:
+  stage: buildimage
   image:
     name: gcr.io/kaniko-project/executor:v1.9.0-debug
     entrypoint: [""]
