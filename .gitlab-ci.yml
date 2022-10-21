@@ -7,7 +7,7 @@ stages:
 
 build kubackup:
   stage: buildapp
-  image: golang:latest
+  image: golang:1.19
   script:
     - go mod init kubackup
     - go mod tidy
