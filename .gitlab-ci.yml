@@ -11,7 +11,7 @@ build kubackup:
   script:
     - go mod init kubackup
     - go mod tidy
-    - go build .
+    - CGO_ENABLED=0 go build .
   artifacts:
     paths:
       - kubackup
