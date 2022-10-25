@@ -9,6 +9,7 @@ backupTypes:
     command: PGPASSWORD=$POSTGRES_PASSWORD pg_dump -U $POSTGRES_USER -w $POSTGRES_DB
     suffix: .sql
 #  - labelSelector: app.kubernetes.io/name=wordpress
+#    container: wordpress
 #    # corev1.Pod.Spec.Containers[].VolumeMounts[]
 #    command: tar cf - -C /bitnami/wordpress .
 #    suffix: .tar
