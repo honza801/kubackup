@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: false
+metadata:
+  name: kubackup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubackup
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - pods
+  - pods/attach
+  - pods/exec
+  - pods/status
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubackup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubackup
+subjects:
+- kind: ServiceAccount
+  name: kubackup
+  namespace: default
