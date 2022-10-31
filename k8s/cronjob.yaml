@@ -11,7 +11,7 @@ spec:
           containers:
           - name: kubackup
             image: honza801/kubackup:v0.2
-            imagePullPolicy: IfNotPresent
+            imagePullPolicy: Always
             envFrom:
             - secretRef:
                 name: kubackup-env
@@ -19,6 +19,7 @@ spec:
             - name: kubackup-config
               mountPath: /etc/kubackup
           restartPolicy: OnFailure
+          serviceAccountName: kubackup
           volumes:
           - name: kubackup-config
             configMap:
