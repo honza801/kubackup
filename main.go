@@ -18,9 +18,7 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"path/filepath"
 	"time"
 	"io"
 	"os"
@@ -30,13 +28,6 @@ import (
 	//"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
-
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -58,53 +49,6 @@ func check(e error) {
     if e != nil {
         panic(e)
     }
-}
-
-// ExecCmd exec command on specific pod and wait the command's output.
-func ExecCmd(client kubernetes.Interface, config *rest.Config, pod corev1.Pod, container string,
-    command string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-    cmd := []string{
-        "sh",
-        "-c",
-        command,
-    }
-    req := client.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).
-        Namespace(pod.Namespace).SubResource("exec")
-    option := &corev1.PodExecOptions{
-        Command: cmd,
-        Stdout:  true,
-        Stderr:  true,
-        TTY:     false,
-    }
-    if stdin == nil {
-        option.Stdin = false
-    } else {
-        option.Stdin = true
-    }
-    if container != "" {
-        option.Container = container
-    }
-    req.VersionedParams(
-        option,
-        scheme.ParameterCodec,
-    )
-
-    fmt.Println("EXEC start on ns:", pod.Namespace, "p:", pod.Name, "c:", container)//, "cmd:", command)
-    exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
-    if err != nil {
-	    return err
-    }
-    err = exec.Stream(remotecommand.StreamOptions{
-        Stdin:  stdin,
-        Stdout: stdout,
-        Stderr: stderr,
-    })
-    if err != nil {
-        return err
-    }
-    //fmt.Println("EXEC end on ns:", pod.Namespace, "p:", pod.Name)
-
-    return nil
 }
 
 // The session the S3 Uploader will use
@@ -151,43 +95,6 @@ func GetObjectName(p corev1.Pod, suffix string) string {
 	return fmt.Sprintf("%s/%s/%s%s", p.Namespace, currentTime.Format("2006-01-02"), p.Name, suffix)
 }
 
-func GetKubeConfigKubernetes() (clientset kubernetes.Interface, config *rest.Config) {
-	var kubeconfig *string
-	var err error
-
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-
-	// use the current context in kubeconfig
-	config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	check(err)
-
-	// create the clientset
-	clientset, err = kubernetes.NewForConfig(config)
-	check(err)
-
-	return
-}
-
-func GetInClusterKubernetes() (clientset kubernetes.Interface, config *rest.Config) {
-	var err error
-
-	// creates the in-cluster config
-	config, err = rest.InClusterConfig()
-	if err != nil {
-		return nil, nil
-	}
-
-	// creates the clientset
-	clientset, err = kubernetes.NewForConfig(config)
-	check(err)
-
-	return
-}
 
 func GetKubackupConfigFromFile(filename string) (kubackupConfig KubackupConfig){
 	configFile, err := os.ReadFile(filename)
@@ -198,6 +105,7 @@ func GetKubackupConfigFromFile(filename string) (kubackupConfig KubackupConfig){
 
 	return
 }
+
 
 func main() {
 	configFile := os.Getenv("KUBACKUP_CONFIG")
@@ -222,33 +130,60 @@ func main() {
 		bucket = "kubackup"
 	}
 
+	aes_key := os.Getenv("AES_ENCRYPT_KEY")
+
 	for _, backupType := range kubackupConfig.BackupTypes {
 		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: backupType.LabelSelector})
 		check(err)
 
-		for _, p := range pods.Items {
+		for _, pod := range pods.Items {
 
-			if p.Status.Phase != corev1.PodRunning {
+			if pod.Status.Phase != corev1.PodRunning {
 				continue
 			}
 
-			reader, writer := io.Pipe()
+			var reader, encReader *io.PipeReader
+			var writer, encWriter *io.PipeWriter
+
+			if aes_key != "" {
+				encReader, writer = io.Pipe()
+				reader, encWriter = io.Pipe()
+
+				go func() {
+					defer encWriter.Close()
+
+					err := Encrypt(encReader, encWriter, []byte(aes_key))
+					if err != nil {
+						fmt.Println("ERR encrypting data:", err)
+					}
+				}()
+			} else {
+				reader, writer = io.Pipe()
+			}
 
 			go func() {
 				compWriter, err := zstd.NewWriter(writer)
+				if err != nil {
+					fmt.Println("ERR compress data:", err)
+				}
 				defer writer.Close()
 				defer compWriter.Close()
 
-				err = ExecCmd(clientset, config, p, backupType.Container, backupType.Command, nil, compWriter, os.Stderr)
+				err = ExecCmd(clientset, config, pod, backupType.Container, backupType.Command, nil, compWriter, os.Stderr)
 				if err != nil {
-					fmt.Println("ERR", err)
+					fmt.Println("ERR run backup:" , err)
 				}
 			}()
 
 			defer reader.Close()
-			UploadS3(sess, bucket, GetObjectName(p, backupType.Suffix+".zst"), reader)
+			suffix := backupType.Suffix+".zst"
+			if aes_key != "" {
+				suffix += ".aes"
+			}
+			UploadS3(sess, bucket, GetObjectName(pod, suffix), reader)
 			time.Sleep(time.Second)
 		}
 
 	}
 }
+// vim: noet
