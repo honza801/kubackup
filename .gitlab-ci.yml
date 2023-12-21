@@ -1,5 +1,5 @@
 variables:
-  IMAGE_TAG: honza801/kubackup:v0.2
+  IMAGE_TAG: honza801/kubackup:v0.3
 
 stages:
   - buildapp
@@ -7,7 +7,7 @@ stages:
 
 build kubackup:
   stage: buildapp
-  image: golang:1.19
+  image: golang:1.21
   script:
     - go mod init kubackup
     - go mod tidy
