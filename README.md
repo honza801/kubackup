@@ -14,3 +14,9 @@ cp env.example env
 source ./env
 ./kubackup
 ```
+
+# How to decrypt
+```
+source ./env
+./kubackup decrypt < backup.zst.aes > backup.zst
+```
